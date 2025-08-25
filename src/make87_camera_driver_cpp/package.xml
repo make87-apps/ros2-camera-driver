@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>make87_camera_driver_cpp</name>
+  <version>0.0.1</version>
+  <description>ROS 2 C++ camera driver for IP cameras</description>
+  <maintainer email="nisse@make87.com">make87</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>pkg-config</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>libavcodec-dev</depend>
+  <depend>libavformat-dev</depend>
+  <depend>libavutil-dev</depend>
+  <depend>libswscale-dev</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,47 +1,53 @@
 version: 1
 interfaces:
-  - name: zenoh
+  - name: ros
     protocol: zenoh
     default_port:
       name: zenoh
       protocol: TCP
       target_port: 7447
     publishers:
-      - name: outgoing_message
+      - name: camera_frames
         spec:
-          make87_message: make87_messages.text.PlainText
-        encoding: proto
-        config:
-          type: object
-          properties:
-            congestion_control:
-              type: string
-              enum: [ DROP, BLOCK ]
-              default: DROP
-            priority:
-              type: string
-              enum:
-                - REAL_TIME
-                - INTERACTIVE_HIGH
-                - INTERACTIVE_LOW
-                - DATA_HIGH
-                - DATA
-                - DATA_LOW
-                - BACKGROUND
-              default: DATA
-            express:
-              type: boolean
-              default: true
-            reliability:
-              type: string
-              enum: [ BEST_EFFORT, RELIABLE ]
-              default: RELIABLE
+          string: ros2.sensor_msgs.msg.Image
+        encoding: cdr
+config:
+  type: object
+  properties:
+    camera_name:
+      type: string
+      description: Optional label or ID for the camera (defaults to camera_ip if not set)
+    camera_ip:
+      type: string
+      description: IP address or hostname of the camera
+    camera_port:
+      type: integer
+      description: RTSP port of the camera
+      default: 554
+    camera_path:
+      type: string
+      description: RTSP URI path or suffix for the camera
+      default: "/"
+    camera_username:
+      type: string
+      description: Username for the camera (optional)
+      default: null
+    camera_password:
+      type: string
+      description: Password for the camera (optional, only if username is set)
+      default: null
+  required:
+    - camera_ip
 container_config:
   environment:
-    RUST_LOG: info
+    ROS_DOMAIN_ID: 87
+  volumes:
+    - /etc/localtime:/etc/localtime:ro
 build:
-  build_kit:
-    name: rust
+  custom:
+    dockerfile: build_kit/Dockerfile
 dev_build:
-  build_kit:
-    name: rust
+  custom:
+    dockerfile: build_kit/Dockerfile.dev
+    build_additions:
+      ssh: ssh_server

@@ -1,0 +1,48 @@
+# ── make87 ROS 2 dev base ───────────────────────────────────────────────────────
+# Multi-arch (amd64/arm64) official image; Jazzy on Ubuntu 24.04 (Noble)
+ARG ROS_DISTRO=jazzy
+FROM ros:${ROS_DISTRO}-ros-base
+
+# Use bash for RUN so we can `source` easily if needed
+SHELL ["/bin/bash", "-c"]
+
+# Locale + dev tools + ROS build tooling + FFmpeg libraries
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git \
+    ros-dev-tools \
+    python3-colcon-common-extensions \
+    python3-vcstool \
+    fastdds-tools \
+    ros-${ROS_DISTRO}-rmw-zenoh-cpp \
+    jq \
+    openssh-client \
+    pkg-config \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /home/state/code
+
+# Copy the entrypoint script
+COPY build_kit/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Optional: keep a stable domain
+ENV ROS_DOMAIN_ID=87
+ENV RMW_IMPLEMENTATION=rmw_zenoh_cpp
+
+# Set development environment flag
+ENV IS_DEV_ENV=true
+
+# Set development paths for the entrypoint script (these are the defaults anyway)
+ENV PROJECT_DIR=/home/state/code
+ENV ROS_ENTRYPOINT=/ros_entrypoint.sh
+ENV SETUP_SCRIPT=install/setup.bash
+ENV PACKAGE_NAME=make87_camera_driver_cpp
+ENV NODE_NAME=camera_driver
+
+# Use our custom entrypoint script
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
