@@ -1,6 +1,7 @@
 # ── make87 ROS 2 dev base ───────────────────────────────────────────────────────
 # Multi-arch (amd64/arm64) official image; Jazzy on Ubuntu 24.04 (Noble)
 ARG ROS_DISTRO=jazzy
+ARG ENABLE_JPEG_COMPRESSION=OFF
 FROM ros:${ROS_DISTRO}-ros-base
 
 # Use bash for RUN so we can `source` easily if needed
@@ -36,6 +37,9 @@ ENV RMW_IMPLEMENTATION=rmw_zenoh_cpp
 
 # Set development environment flag
 ENV IS_DEV_ENV=true
+
+# Set JPEG compression build flag
+ENV ENABLE_JPEG_COMPRESSION=${ENABLE_JPEG_COMPRESSION}
 
 # Set development paths for the entrypoint script (these are the defaults anyway)
 ENV PROJECT_DIR=/home/state/code

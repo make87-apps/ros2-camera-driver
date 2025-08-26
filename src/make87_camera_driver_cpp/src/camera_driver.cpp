@@ -14,6 +14,9 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/image_encodings.hpp"
+#ifdef ENABLE_JPEG_COMPRESSION
+#include "sensor_msgs/msg/compressed_image.hpp"
+#endif
 #include <nlohmann/json.hpp>
 
 extern "C" {
@@ -286,19 +289,27 @@ public:
 
         // Allocate frame and packet
         frame_ = av_frame_alloc();
-        rgb_frame_ = av_frame_alloc();
+        target_frame_ = av_frame_alloc();
         packet_ = av_packet_alloc();
 
-        if (!frame_ || !rgb_frame_ || !packet_) {
+        if (!frame_ || !target_frame_ || !packet_) {
             RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
                         "Failed to allocate frame/packet");
             return false;
         }
 
-        // Initialize scaling context to convert to RGB24
+#ifdef ENABLE_JPEG_COMPRESSION
+        // For JPEG compression, keep original format or convert to YUV420P for better compression
+        target_pix_fmt_ = AV_PIX_FMT_YUVJ420P;  // JPEG-compatible YUV format
+#else
+        // For RGB8 output, convert to RGB24
+        target_pix_fmt_ = AV_PIX_FMT_RGB24;
+#endif
+
+        // Initialize scaling context
         sws_ctx_ = sws_getContext(
             codec_ctx_->width, codec_ctx_->height, codec_ctx_->pix_fmt,
-            codec_ctx_->width, codec_ctx_->height, AV_PIX_FMT_RGB24,
+            codec_ctx_->width, codec_ctx_->height, target_pix_fmt_,
             SWS_BILINEAR, nullptr, nullptr, nullptr
         );
 
@@ -308,18 +319,18 @@ public:
             return false;
         }
 
-        // Allocate buffer for RGB24 frame
-        int buffer_size = av_image_get_buffer_size(AV_PIX_FMT_RGB24, codec_ctx_->width, codec_ctx_->height, 1);
-        rgb_buffer_ = (uint8_t*)av_malloc(buffer_size);
-        if (!rgb_buffer_) {
+        // Allocate buffer for target format frame
+        int buffer_size = av_image_get_buffer_size(target_pix_fmt_, codec_ctx_->width, codec_ctx_->height, 1);
+        frame_buffer_ = (uint8_t*)av_malloc(buffer_size);
+        if (!frame_buffer_) {
             RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
-                        "Failed to allocate RGB24 buffer");
+                        "Failed to allocate frame buffer");
             return false;
         }
 
-        // Setup RGB24 frame
-        av_image_fill_arrays(rgb_frame_->data, rgb_frame_->linesize,
-                           rgb_buffer_, AV_PIX_FMT_RGB24,
+        // Setup target format frame
+        av_image_fill_arrays(target_frame_->data, target_frame_->linesize,
+                           frame_buffer_, target_pix_fmt_,
                            codec_ctx_->width, codec_ctx_->height, 1);
 
         width_ = codec_ctx_->width;
@@ -331,7 +342,7 @@ public:
         return true;
     }
 
-    bool read_frame(std::vector<uint8_t>& rgb_data) {
+    bool read_frame(std::vector<uint8_t>& output_data) {
         while (true) {
             int ret = av_read_frame(format_ctx_, packet_);
             if (ret < 0) {
@@ -374,18 +385,27 @@ public:
                 continue;
             }
 
-            // Convert frame to RGB24
+            // Convert frame to target format
             sws_scale(sws_ctx_,
                      (const uint8_t* const*)frame_->data, frame_->linesize,
                      0, codec_ctx_->height,
-                     rgb_frame_->data, rgb_frame_->linesize);
+                     target_frame_->data, target_frame_->linesize);
 
+#ifdef ENABLE_JPEG_COMPRESSION
+            // Encode as JPEG
+            if (!encode_jpeg(output_data)) {
+                RCLCPP_WARN(rclcpp::get_logger("make87_camera_driver"),
+                           "Failed to encode JPEG, retrying...");
+                continue;
+            }
+#else
             // Copy RGB24 data to output vector
             int rgb_size = width_ * height_ * 3; // 3 bytes per pixel (RGB)
-            rgb_data.resize(rgb_size);
+            output_data.resize(rgb_size);
 
             // Copy RGB data (single plane)
-            memcpy(rgb_data.data(), rgb_frame_->data[0], rgb_size);
+            memcpy(output_data.data(), target_frame_->data[0], rgb_size);
+#endif
 
             return true;
         }
@@ -393,6 +413,81 @@ public:
 
     int get_width() const { return width_; }
     int get_height() const { return height_; }
+
+#ifdef ENABLE_JPEG_COMPRESSION
+    bool encode_jpeg(std::vector<uint8_t>& jpeg_data) {
+        // Initialize JPEG encoder if not already done
+        if (!jpeg_encoder_ctx_) {
+            if (!init_jpeg_encoder()) {
+                return false;
+            }
+        }
+
+        // Create frame for JPEG encoder
+        AVFrame* jpeg_frame = av_frame_alloc();
+        if (!jpeg_frame) {
+            return false;
+        }
+
+        jpeg_frame->format = target_pix_fmt_;
+        jpeg_frame->width = width_;
+        jpeg_frame->height = height_;
+        
+        // Copy data from target_frame to jpeg_frame
+        av_frame_copy(jpeg_frame, target_frame_);
+
+        // Send frame to encoder
+        int ret = avcodec_send_frame(jpeg_encoder_ctx_, jpeg_frame);
+        av_frame_free(&jpeg_frame);
+        
+        if (ret < 0) {
+            return false;
+        }
+
+        // Receive encoded packet
+        AVPacket* jpeg_packet = av_packet_alloc();
+        ret = avcodec_receive_packet(jpeg_encoder_ctx_, jpeg_packet);
+        
+        if (ret == 0) {
+            // Copy JPEG data
+            jpeg_data.resize(jpeg_packet->size);
+            memcpy(jpeg_data.data(), jpeg_packet->data, jpeg_packet->size);
+            av_packet_free(&jpeg_packet);
+            return true;
+        }
+        
+        av_packet_free(&jpeg_packet);
+        return false;
+    }
+
+    bool init_jpeg_encoder() {
+        const AVCodec* jpeg_codec = avcodec_find_encoder(AV_CODEC_ID_MJPEG);
+        if (!jpeg_codec) {
+            RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
+                        "MJPEG encoder not found");
+            return false;
+        }
+
+        jpeg_encoder_ctx_ = avcodec_alloc_context3(jpeg_codec);
+        if (!jpeg_encoder_ctx_) {
+            return false;
+        }
+
+        jpeg_encoder_ctx_->width = width_;
+        jpeg_encoder_ctx_->height = height_;
+        jpeg_encoder_ctx_->pix_fmt = target_pix_fmt_;
+        jpeg_encoder_ctx_->time_base = {1, 30}; // 30 FPS timebase
+        jpeg_encoder_ctx_->qmin = 10;
+        jpeg_encoder_ctx_->qmax = 63;
+
+        if (avcodec_open2(jpeg_encoder_ctx_, jpeg_codec, nullptr) < 0) {
+            avcodec_free_context(&jpeg_encoder_ctx_);
+            return false;
+        }
+
+        return true;
+    }
+#endif
 
 private:
     std::string build_rtsp_url(const CameraConfig& config) {
@@ -423,18 +518,24 @@ private:
             sws_ctx_ = nullptr;
         }
 
-        if (rgb_buffer_) {
-            av_free(rgb_buffer_);
-            rgb_buffer_ = nullptr;
+        if (frame_buffer_) {
+            av_free(frame_buffer_);
+            frame_buffer_ = nullptr;
         }
 
         if (frame_) {
             av_frame_free(&frame_);
         }
 
-        if (rgb_frame_) {
-            av_frame_free(&rgb_frame_);
+        if (target_frame_) {
+            av_frame_free(&target_frame_);
         }
+
+#ifdef ENABLE_JPEG_COMPRESSION
+        if (jpeg_encoder_ctx_) {
+            avcodec_free_context(&jpeg_encoder_ctx_);
+        }
+#endif
 
         if (packet_) {
             av_packet_free(&packet_);
@@ -454,9 +555,13 @@ private:
     AVCodecContext* codec_ctx_ = nullptr;
     SwsContext* sws_ctx_ = nullptr;
     AVFrame* frame_ = nullptr;
-    AVFrame* rgb_frame_ = nullptr;
+    AVFrame* target_frame_ = nullptr;
     AVPacket* packet_ = nullptr;
-    uint8_t* rgb_buffer_ = nullptr;
+    uint8_t* frame_buffer_ = nullptr;
+    AVPixelFormat target_pix_fmt_;
+#ifdef ENABLE_JPEG_COMPRESSION
+    AVCodecContext* jpeg_encoder_ctx_ = nullptr;
+#endif
     int video_stream_index_ = -1;
     int width_ = 0;
     int height_ = 0;
@@ -481,8 +586,13 @@ public:
         return;
     }
 
-    pub_ = this->create_publisher<sensor_msgs::msg::Image>(topic_name, 10);
-    RCLCPP_INFO(this->get_logger(), "make87_camera_driver started; publishing to '%s'", topic_name.c_str());
+#ifdef ENABLE_JPEG_COMPRESSION
+    compressed_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>(topic_name, 10);
+    RCLCPP_INFO(this->get_logger(), "make87_camera_driver started; publishing JPEG compressed images to '%s'", topic_name.c_str());
+#else
+    image_pub_ = this->create_publisher<sensor_msgs::msg::Image>(topic_name, 10);
+    RCLCPP_INFO(this->get_logger(), "make87_camera_driver started; publishing RGB8 images to '%s'", topic_name.c_str());
+#endif
 
     // Start capture thread
     capture_thread_ = std::thread(&CameraDriver::capture_loop, this);
@@ -497,39 +607,53 @@ public:
 
 private:
   void capture_loop() {
-    std::vector<uint8_t> rgb_data;
+    std::vector<uint8_t> frame_data;
 
     while (!should_stop_ && rclcpp::ok()) {
-        if (!ffmpeg_driver_->read_frame(rgb_data)) {
+        if (!ffmpeg_driver_->read_frame(frame_data)) {
             RCLCPP_WARN(this->get_logger(), "Failed to read frame, retrying...");
             std::this_thread::sleep_for(10ms);
             continue;
         }
 
+#ifdef ENABLE_JPEG_COMPRESSION
+        // Create ROS CompressedImage message
+        auto msg = std::make_unique<sensor_msgs::msg::CompressedImage>();
+        msg->header.stamp = this->now();
+        msg->header.frame_id = "camera_frame";
+        msg->format = "jpeg";
+        msg->data = frame_data;
+
+        compressed_pub_->publish(std::move(msg));
+        RCLCPP_DEBUG(this->get_logger(), "Published JPEG frame (%zu bytes)", frame_data.size());
+#else
         // Create ROS Image message
         auto msg = std::make_unique<sensor_msgs::msg::Image>();
         msg->header.stamp = this->now();
         msg->header.frame_id = "camera_frame";
         msg->height = ffmpeg_driver_->get_height();
         msg->width = ffmpeg_driver_->get_width();
-        msg->encoding = sensor_msgs::image_encodings::RGB8; // Use RGB8 encoding
+        msg->encoding = sensor_msgs::image_encodings::RGB8;
         msg->is_bigendian = false;
         msg->step = ffmpeg_driver_->get_width() * 3; // RGB8: 3 bytes per pixel
-
-        // Copy RGB data
-        msg->data = rgb_data;
+        msg->data = frame_data;
 
         // Get values before move
         auto width = msg->width;
         auto height = msg->height;
         
-        pub_->publish(std::move(msg));
+        image_pub_->publish(std::move(msg));
         RCLCPP_DEBUG(this->get_logger(), "Published RGB8 frame %dx%d (%zu bytes)",
-                    width, height, rgb_data.size());
+                    width, height, frame_data.size());
+#endif
     }
   }
 
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_;
+#ifdef ENABLE_JPEG_COMPRESSION
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_pub_;
+#else
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
+#endif
   std::unique_ptr<FFmpegCameraDriver> ffmpeg_driver_;
   std::thread capture_thread_;
   std::atomic<bool> should_stop_{false};

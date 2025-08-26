@@ -51,3 +51,29 @@ dev_build:
     dockerfile: build_kit/Dockerfile.dev
     build_additions:
       ssh: ssh_server
+variants:
+  jpeg:
+    interfaces:
+      - name: ros
+        protocol: zenoh
+        default_port:
+          name: zenoh
+          protocol: TCP
+          target_port: 7447
+        publishers:
+          - name: camera_frames
+            spec:
+              string: ros2.sensor_msgs.msg.CompressedImage
+            encoding: cdr
+    build:
+      custom:
+        dockerfile: build_kit/Dockerfile
+        args:
+          ENABLE_JPEG_COMPRESSION: "ON"
+    dev_build:
+      custom:
+        dockerfile: build_kit/Dockerfile.dev
+        args:
+          ENABLE_JPEG_COMPRESSION: "ON"
+        build_additions:
+          ssh: ssh_server

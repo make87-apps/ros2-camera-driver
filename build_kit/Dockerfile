@@ -1,5 +1,6 @@
 # ── Build stage ────────────────────────────────────────────────────────────────
 ARG ROS_DISTRO=jazzy
+ARG ENABLE_JPEG_COMPRESSION=OFF
 FROM ros:${ROS_DISTRO}-ros-base AS builder
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
@@ -22,7 +23,7 @@ COPY . .
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
     colcon build \
     --merge-install \
-    --cmake-args -DCMAKE_BUILD_TYPE=Release
+    --cmake-args -DCMAKE_BUILD_TYPE=Release -DENABLE_JPEG_COMPRESSION=${ENABLE_JPEG_COMPRESSION}
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM ros:${ROS_DISTRO}-ros-core
