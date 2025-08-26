@@ -371,6 +371,7 @@ build_ros_workspace() {
             log_info "Building with RGB8 output (JPEG compression disabled)"
         fi
         
+        echo "DEBUG: CMAKE_ARGS = '${CMAKE_ARGS}'"
         if ! colcon build --merge-install --cmake-args ${CMAKE_ARGS}; then
             log_fatal "Failed to build ROS2 workspace"
         fi
