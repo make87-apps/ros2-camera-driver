@@ -250,25 +250,39 @@ clone_or_update_repository() {
 
         cd "${target_dir}" || log_fatal "Failed to change to ${target_dir}"
 
-        # Set remote URL
-        git remote set-url origin "${git_url}"
+        # Check if this is actually a git repository
+        if ! git rev-parse --git-dir > /dev/null 2>&1; then
+            log_warn "Directory exists but is not a git repository. Initializing git repository..."
+            git init
+            git remote add origin "${git_url}"
+        else
+            # Set remote URL
+            git remote set-url origin "${git_url}"
+        fi
 
         # Handle branch switching if specified
         if [[ -n "${git_branch}" ]]; then
             local current_branch
-            current_branch=$(git rev-parse --abbrev-ref HEAD)
+            # Only get current branch if we have commits (not a fresh repo)
+            if git rev-parse --verify HEAD > /dev/null 2>&1; then
+                current_branch=$(git rev-parse --abbrev-ref HEAD)
+            else
+                current_branch="(no commits)"
+            fi
 
             if [[ "${current_branch}" != "${git_branch}" ]]; then
                 log_info "Current branch: ${current_branch}, target branch: ${git_branch}"
 
-                # Stage and commit any changes
-                if ! git diff --quiet || ! git diff --cached --quiet; then
-                    log_info "Staging and committing local changes..."
-                    git add .
-                    git commit -m "Saving changes before switching branch" || log_info "No changes to commit"
+                # Stage and commit any changes (only if we have commits already)
+                if [[ "${current_branch}" != "(no commits)" ]]; then
+                    if ! git diff --quiet || ! git diff --cached --quiet; then
+                        log_info "Staging and committing local changes..."
+                        git add .
+                        git commit -m "Saving changes before switching branch" || log_info "No changes to commit"
 
-                    # Try to push changes
-                    git push origin "${current_branch}" || log_warn "Failed to push changes to ${current_branch}"
+                        # Try to push changes
+                        git push origin "${current_branch}" || log_warn "Failed to push changes to ${current_branch}"
+                    fi
                 fi
 
                 # Switch to target branch
@@ -279,10 +293,20 @@ clone_or_update_repository() {
             fi
         fi
 
-        # Pull latest changes
-        local pull_branch="${git_branch:-$(git rev-parse --abbrev-ref HEAD)}"
-        log_info "Pulling latest changes from branch: ${pull_branch}"
-        git pull origin "${pull_branch}" || log_warn "Failed to pull latest changes"
+        # Pull latest changes (only if we have a proper repository with commits)
+        if git rev-parse --verify HEAD > /dev/null 2>&1; then
+            local pull_branch="${git_branch:-$(git rev-parse --abbrev-ref HEAD)}"
+            log_info "Pulling latest changes from branch: ${pull_branch}"
+            git pull origin "${pull_branch}" || log_warn "Failed to pull latest changes"
+        else
+            log_info "Fresh repository detected, performing initial fetch..."
+            git fetch origin || log_warn "Failed to fetch from origin"
+            if [[ -n "${git_branch}" ]]; then
+                git checkout -b "${git_branch}" "origin/${git_branch}" 2>/dev/null || \
+                git checkout "${git_branch}" 2>/dev/null || \
+                log_warn "Could not checkout branch ${git_branch}, staying on current branch"
+            fi
+        fi
     fi
 
     log_info "Repository setup completed"
