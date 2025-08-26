@@ -372,6 +372,8 @@ build_ros_workspace() {
         fi
         
         echo "DEBUG: CMAKE_ARGS = '${CMAKE_ARGS}'"
+        # Clean build to ensure cmake args take effect
+        rm -rf build/ install/ log/
         if ! colcon build --merge-install --cmake-args ${CMAKE_ARGS}; then
             log_fatal "Failed to build ROS2 workspace"
         fi
