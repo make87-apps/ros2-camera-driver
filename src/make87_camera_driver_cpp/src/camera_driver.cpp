@@ -299,10 +299,10 @@ public:
         }
 
 #ifdef ENABLE_JPEG_COMPRESSION
-        // For JPEG compression, keep original format or convert to YUV420P for better compression
-        target_pix_fmt_ = AV_PIX_FMT_YUVJ420P;  // JPEG-compatible YUV format
+        // For JPEG compression, use YUV420P (not deprecated YUVJ420P)
+        target_pix_fmt_ = AV_PIX_FMT_YUV420P;
         RCLCPP_INFO(rclcpp::get_logger("make87_camera_driver"),
-                   "JPEG compression enabled, converting to YUVJ420P (ENABLE_JPEG_COMPRESSION=%d)", ENABLE_JPEG_COMPRESSION);
+                   "JPEG compression enabled, converting to YUV420P (ENABLE_JPEG_COMPRESSION=%d)", ENABLE_JPEG_COMPRESSION);
 #else
         // For RGB8 output, convert to RGB24
         target_pix_fmt_ = AV_PIX_FMT_RGB24;
@@ -316,6 +316,20 @@ public:
             codec_ctx_->width, codec_ctx_->height, target_pix_fmt_,
             SWS_BILINEAR, nullptr, nullptr, nullptr
         );
+
+#ifdef ENABLE_JPEG_COMPRESSION
+        // Set color range for JPEG (full range)
+        const int srcRange = 1; // Full range
+        const int dstRange = 1; // Full range
+        const int brightness = 0;
+        const int contrast = 1 << 16; // 1.0 in fixed point
+        const int saturation = 1 << 16; // 1.0 in fixed point
+        
+        sws_setColorspaceDetails(sws_ctx_,
+            sws_getCoefficients(SWS_CS_DEFAULT), srcRange,
+            sws_getCoefficients(SWS_CS_DEFAULT), dstRange,
+            brightness, contrast, saturation);
+#endif
 
         if (!sws_ctx_) {
             RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
@@ -511,6 +525,7 @@ public:
         jpeg_encoder_ctx_->height = height_;
         jpeg_encoder_ctx_->pix_fmt = target_pix_fmt_;
         jpeg_encoder_ctx_->time_base = {1, 30}; // 30 FPS timebase
+        jpeg_encoder_ctx_->color_range = AVCOL_RANGE_JPEG; // Full range for JPEG
         jpeg_encoder_ctx_->qmin = 10;
         jpeg_encoder_ctx_->qmax = 63;
 
