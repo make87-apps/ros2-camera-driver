@@ -514,8 +514,11 @@ public:
         jpeg_encoder_ctx_->height = height_;
         jpeg_encoder_ctx_->pix_fmt = AV_PIX_FMT_YUVJ420P; // MJPEG expects this format
         jpeg_encoder_ctx_->time_base = {1, 30}; // 30 FPS timebase
-        jpeg_encoder_ctx_->qmin = 10;
-        jpeg_encoder_ctx_->qmax = 63;
+        
+        // Set JPEG quality to 90 (scale is roughly: quality = (31 - qscale) * 3.32)
+        // For quality 90: qscale ≈ 3-4
+        jpeg_encoder_ctx_->global_quality = FF_QP2LAMBDA * 3; 
+        jpeg_encoder_ctx_->flags |= AV_CODEC_FLAG_QSCALE;
 
         int ret = avcodec_open2(jpeg_encoder_ctx_, jpeg_codec, nullptr);
         if (ret < 0) {
