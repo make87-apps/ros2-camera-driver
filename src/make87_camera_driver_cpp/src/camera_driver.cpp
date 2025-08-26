@@ -439,15 +439,16 @@ public:
             }
         }
 
-        // Create frame for JPEG encoder in YUVJ420P format
+        // Create frame for JPEG encoder in YUV420P format
         AVFrame* jpeg_frame = av_frame_alloc();
         if (!jpeg_frame) {
             return false;
         }
 
-        jpeg_frame->format = AV_PIX_FMT_YUVJ420P;
+        jpeg_frame->format = AV_PIX_FMT_YUV420P;
         jpeg_frame->width = width_;
         jpeg_frame->height = height_;
+        jpeg_frame->color_range = AVCOL_RANGE_JPEG; // Full range
         
         // Allocate buffer for JPEG frame
         if (av_frame_get_buffer(jpeg_frame, 32) < 0) {
@@ -457,7 +458,7 @@ public:
             return false;
         }
         
-        // Convert RGB24 to YUVJ420P for JPEG encoding
+        // Convert RGB24 to YUV420P for JPEG encoding
         sws_scale(jpeg_sws_ctx_,
                  (const uint8_t* const*)target_frame_->data, target_frame_->linesize,
                  0, height_,
@@ -509,10 +510,11 @@ public:
             return false;
         }
 
-        // Use YUVJ420P for JPEG encoding (it's what MJPEG expects)
+        // Use YUV420P for JPEG encoding (modern approach)
         jpeg_encoder_ctx_->width = width_;
         jpeg_encoder_ctx_->height = height_;
-        jpeg_encoder_ctx_->pix_fmt = AV_PIX_FMT_YUVJ420P; // MJPEG expects this format
+        jpeg_encoder_ctx_->pix_fmt = AV_PIX_FMT_YUV420P; // Modern format
+        jpeg_encoder_ctx_->color_range = AVCOL_RANGE_JPEG; // Full range for JPEG
         jpeg_encoder_ctx_->time_base = {1, 30}; // 30 FPS timebase
         
         // Set JPEG quality to 90 (scale is roughly: quality = (31 - qscale) * 3.32)
@@ -530,12 +532,20 @@ public:
             return false;
         }
 
-        // Create RGB24 to YUVJ420P scaling context for JPEG encoding
+        // Create RGB24 to YUV420P scaling context for JPEG encoding
         jpeg_sws_ctx_ = sws_getContext(
             width_, height_, AV_PIX_FMT_RGB24,
-            width_, height_, AV_PIX_FMT_YUVJ420P,
+            width_, height_, AV_PIX_FMT_YUV420P,
             SWS_BILINEAR, nullptr, nullptr, nullptr
         );
+
+        // Set color space details for full range JPEG
+        const int srcRange = 0; // Limited range (typical for RGB)
+        const int dstRange = 1; // Full range (for JPEG)
+        sws_setColorspaceDetails(jpeg_sws_ctx_,
+            sws_getCoefficients(SWS_CS_ITU709), srcRange,
+            sws_getCoefficients(SWS_CS_ITU709), dstRange,
+            0, 1<<16, 1<<16);
 
         if (!jpeg_sws_ctx_) {
             RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
