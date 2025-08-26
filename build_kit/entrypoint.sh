@@ -361,21 +361,18 @@ build_ros_workspace() {
 
         # Build the workspace
         log_info "Running colcon build..."
-        
-        # Determine build args based on ENABLE_JPEG_COMPRESSION environment variable
+
+        # Build with conditional cmake args based on ENABLE_JPEG_COMPRESSION environment variable
         if [[ "${ENABLE_JPEG_COMPRESSION:-OFF}" == "ON" ]]; then
-            CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release -DENABLE_JPEG_COMPRESSION=ON"
             log_info "Building with JPEG compression enabled"
+            if ! colcon build --merge-install --cmake-force-configure --cmake-args -DCMAKE_BUILD_TYPE=Release -DENABLE_JPEG_COMPRESSION=ON; then
+                log_fatal "Failed to build ROS2 workspace"
+            fi
         else
-            CMAKE_ARGS="-DCMAKE_BUILD_TYPE=Release"
             log_info "Building with RGB8 output (JPEG compression disabled)"
-        fi
-        
-        echo "DEBUG: CMAKE_ARGS = '${CMAKE_ARGS}'"
-        # Clean build to ensure cmake args take effect
-        rm -rf build/ install/ log/
-        if ! colcon build --merge-install --cmake-force-configure --cmake-args -DCMAKE_BUILD_TYPE=Release -DENABLE_JPEG_COMPRESSION=ON; then
-            log_fatal "Failed to build ROS2 workspace"
+            if ! colcon build --merge-install --cmake-force-configure --cmake-args -DCMAKE_BUILD_TYPE=Release; then
+                log_fatal "Failed to build ROS2 workspace"
+            fi
         fi
 
         log_info "ROS2 workspace build completed"
