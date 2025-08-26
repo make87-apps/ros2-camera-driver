@@ -65,7 +65,16 @@ CameraConfig parse_camera_config() {
     }
 
     try {
-        auto config = nlohmann::json::parse(config_env);
+        auto parsed = nlohmann::json::parse(config_env);
+        
+        // The camera config is nested under the "config" key
+        if (!parsed.contains("config")) {
+            RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
+                        "MAKE87_CONFIG does not contain 'config' section");
+            return camera_config;
+        }
+        
+        auto config = parsed["config"];
 
         camera_config.camera_ip = config.value("camera_ip", "");
         camera_config.camera_name = config.value("camera_name", camera_config.camera_ip);
