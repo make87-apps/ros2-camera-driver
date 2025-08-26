@@ -4,6 +4,7 @@ ARG ROS_DISTRO=jazzy
 ARG ENABLE_JPEG_COMPRESSION=OFF
 FROM ros:${ROS_DISTRO}-ros-base
 
+
 # Use bash for RUN so we can `source` easily if needed
 SHELL ["/bin/bash", "-c"]
 
