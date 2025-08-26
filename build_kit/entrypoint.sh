@@ -287,25 +287,36 @@ clone_or_update_repository() {
 
                 # Switch to target branch
                 log_info "Switching to branch: ${git_branch}"
-                if ! git checkout "${git_branch}"; then
-                    log_fatal "Failed to checkout branch: ${git_branch}"
+                if [[ "${current_branch}" == "(no commits)" ]]; then
+                    # For fresh repos, fetch and checkout from remote
+                    log_info "Fetching branch ${git_branch} from remote..."
+                    if ! git fetch origin "${git_branch}"; then
+                        log_fatal "Failed to fetch branch ${git_branch} from remote"
+                    fi
+                    if ! git checkout -b "${git_branch}" "origin/${git_branch}"; then
+                        log_fatal "Failed to checkout branch ${git_branch} from remote"
+                    fi
+                    log_info "Successfully checked out ${git_branch} from remote"
+                else
+                    # For existing repos with commits
+                    if ! git checkout "${git_branch}"; then
+                        log_fatal "Failed to checkout branch: ${git_branch}"
+                    fi
                 fi
             fi
         fi
 
-        # Pull latest changes (only if we have a proper repository with commits)
+        # Pull latest changes
         if git rev-parse --verify HEAD > /dev/null 2>&1; then
+            # Repository has commits - pull updates
             local pull_branch="${git_branch:-$(git rev-parse --abbrev-ref HEAD)}"
             log_info "Pulling latest changes from branch: ${pull_branch}"
-            git pull origin "${pull_branch}" || log_warn "Failed to pull latest changes"
-        else
-            log_info "Fresh repository detected, performing initial fetch..."
-            git fetch origin || log_warn "Failed to fetch from origin"
-            if [[ -n "${git_branch}" ]]; then
-                git checkout -b "${git_branch}" "origin/${git_branch}" 2>/dev/null || \
-                git checkout "${git_branch}" 2>/dev/null || \
-                log_warn "Could not checkout branch ${git_branch}, staying on current branch"
+            if ! git pull origin "${pull_branch}"; then
+                log_fatal "Failed to pull latest changes from ${pull_branch}"
             fi
+        else
+            # Fresh repository - should have been handled by branch switching above
+            log_info "Fresh repository setup completed during branch checkout"
         fi
     fi
 
