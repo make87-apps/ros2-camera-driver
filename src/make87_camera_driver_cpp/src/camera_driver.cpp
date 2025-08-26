@@ -301,9 +301,13 @@ public:
 #ifdef ENABLE_JPEG_COMPRESSION
         // For JPEG compression, keep original format or convert to YUV420P for better compression
         target_pix_fmt_ = AV_PIX_FMT_YUVJ420P;  // JPEG-compatible YUV format
+        RCLCPP_INFO(rclcpp::get_logger("make87_camera_driver"),
+                   "JPEG compression enabled, converting to YUVJ420P (ENABLE_JPEG_COMPRESSION=%d)", ENABLE_JPEG_COMPRESSION);
 #else
         // For RGB8 output, convert to RGB24
         target_pix_fmt_ = AV_PIX_FMT_RGB24;
+        RCLCPP_INFO(rclcpp::get_logger("make87_camera_driver"),
+                   "RGB8 output enabled, converting to RGB24 (ENABLE_JPEG_COMPRESSION not defined)");
 #endif
 
         // Initialize scaling context

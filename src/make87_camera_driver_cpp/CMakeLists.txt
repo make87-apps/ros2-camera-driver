@@ -4,6 +4,9 @@ project(make87_camera_driver_cpp)
 # Build option for output format
 option(ENABLE_JPEG_COMPRESSION "Enable JPEG compression output (ImageCompressed) instead of raw RGB8 (Image)" OFF)
 
+# Debug: Print the value of ENABLE_JPEG_COMPRESSION
+message(STATUS "ENABLE_JPEG_COMPRESSION option value: ${ENABLE_JPEG_COMPRESSION}")
+
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -32,9 +35,10 @@ target_link_libraries(camera_driver nlohmann_json::nlohmann_json PkgConfig::LIBA
 
 # Configure compression mode
 if(ENABLE_JPEG_COMPRESSION)
-    target_compile_definitions(camera_driver PRIVATE ENABLE_JPEG_COMPRESSION=1)
+    target_compile_definitions(camera_driver PRIVATE ENABLE_JPEG_COMPRESSION)
     message(STATUS "Building with JPEG compression (ImageCompressed output)")
 else()
+    target_compile_definitions(camera_driver PRIVATE ENABLE_RGB8_OUTPUT)
     message(STATUS "Building with raw RGB8 (Image output)")
 endif()
 
