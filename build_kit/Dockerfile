@@ -2,6 +2,10 @@
 ARG ROS_DISTRO=jazzy
 ARG ENABLE_JPEG_COMPRESSION=OFF
 FROM ros:${ROS_DISTRO}-ros-base AS builder
+
+# Re-declare ARG after FROM to make it available in this build stage
+ARG ENABLE_JPEG_COMPRESSION=OFF
+
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
