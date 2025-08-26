@@ -299,10 +299,10 @@ public:
         }
 
 #ifdef ENABLE_JPEG_COMPRESSION
-        // For JPEG compression, use YUV420P (not deprecated YUVJ420P)
-        target_pix_fmt_ = AV_PIX_FMT_YUV420P;
+        // For JPEG compression, convert to RGB24 first, then encode to JPEG
+        target_pix_fmt_ = AV_PIX_FMT_RGB24;
         RCLCPP_INFO(rclcpp::get_logger("make87_camera_driver"),
-                   "JPEG compression enabled, converting to YUV420P (ENABLE_JPEG_COMPRESSION=%d)", ENABLE_JPEG_COMPRESSION);
+                   "JPEG compression enabled, converting to RGB24 then JPEG (ENABLE_JPEG_COMPRESSION=%d)", ENABLE_JPEG_COMPRESSION);
 #else
         // For RGB8 output, convert to RGB24
         target_pix_fmt_ = AV_PIX_FMT_RGB24;
@@ -316,20 +316,6 @@ public:
             codec_ctx_->width, codec_ctx_->height, target_pix_fmt_,
             SWS_BILINEAR, nullptr, nullptr, nullptr
         );
-
-#ifdef ENABLE_JPEG_COMPRESSION
-        // Set color range for JPEG (full range)
-        const int srcRange = 1; // Full range
-        const int dstRange = 1; // Full range
-        const int brightness = 0;
-        const int contrast = 1 << 16; // 1.0 in fixed point
-        const int saturation = 1 << 16; // 1.0 in fixed point
-        
-        sws_setColorspaceDetails(sws_ctx_,
-            sws_getCoefficients(SWS_CS_DEFAULT), srcRange,
-            sws_getCoefficients(SWS_CS_DEFAULT), dstRange,
-            brightness, contrast, saturation);
-#endif
 
         if (!sws_ctx_) {
             RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
@@ -453,13 +439,13 @@ public:
             }
         }
 
-        // Create frame for JPEG encoder
+        // Create frame for JPEG encoder in YUVJ420P format
         AVFrame* jpeg_frame = av_frame_alloc();
         if (!jpeg_frame) {
             return false;
         }
 
-        jpeg_frame->format = target_pix_fmt_;
+        jpeg_frame->format = AV_PIX_FMT_YUVJ420P;
         jpeg_frame->width = width_;
         jpeg_frame->height = height_;
         
@@ -471,9 +457,11 @@ public:
             return false;
         }
         
-        // Copy data from target_frame to jpeg_frame
-        av_frame_copy(jpeg_frame, target_frame_);
-        av_frame_copy_props(jpeg_frame, target_frame_);
+        // Convert RGB24 to YUVJ420P for JPEG encoding
+        sws_scale(jpeg_sws_ctx_,
+                 (const uint8_t* const*)target_frame_->data, target_frame_->linesize,
+                 0, height_,
+                 jpeg_frame->data, jpeg_frame->linesize);
 
         // Send frame to encoder
         int ret = avcodec_send_frame(jpeg_encoder_ctx_, jpeg_frame);
@@ -521,11 +509,11 @@ public:
             return false;
         }
 
+        // Use YUVJ420P for JPEG encoding (it's what MJPEG expects)
         jpeg_encoder_ctx_->width = width_;
         jpeg_encoder_ctx_->height = height_;
-        jpeg_encoder_ctx_->pix_fmt = target_pix_fmt_;
+        jpeg_encoder_ctx_->pix_fmt = AV_PIX_FMT_YUVJ420P; // MJPEG expects this format
         jpeg_encoder_ctx_->time_base = {1, 30}; // 30 FPS timebase
-        jpeg_encoder_ctx_->color_range = AVCOL_RANGE_JPEG; // Full range for JPEG
         jpeg_encoder_ctx_->qmin = 10;
         jpeg_encoder_ctx_->qmax = 63;
 
@@ -535,6 +523,20 @@ public:
             av_strerror(ret, error_buf, sizeof(error_buf));
             RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"), 
                         "Failed to open JPEG encoder: %s", error_buf);
+            avcodec_free_context(&jpeg_encoder_ctx_);
+            return false;
+        }
+
+        // Create RGB24 to YUVJ420P scaling context for JPEG encoding
+        jpeg_sws_ctx_ = sws_getContext(
+            width_, height_, AV_PIX_FMT_RGB24,
+            width_, height_, AV_PIX_FMT_YUVJ420P,
+            SWS_BILINEAR, nullptr, nullptr, nullptr
+        );
+
+        if (!jpeg_sws_ctx_) {
+            RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
+                        "Failed to create JPEG scaling context");
             avcodec_free_context(&jpeg_encoder_ctx_);
             return false;
         }
@@ -589,6 +591,10 @@ private:
         if (jpeg_encoder_ctx_) {
             avcodec_free_context(&jpeg_encoder_ctx_);
         }
+        if (jpeg_sws_ctx_) {
+            sws_freeContext(jpeg_sws_ctx_);
+            jpeg_sws_ctx_ = nullptr;
+        }
 #endif
 
         if (packet_) {
@@ -615,6 +621,7 @@ private:
     AVPixelFormat target_pix_fmt_;
 #ifdef ENABLE_JPEG_COMPRESSION
     AVCodecContext* jpeg_encoder_ctx_ = nullptr;
+    SwsContext* jpeg_sws_ctx_ = nullptr;
 #endif
     int video_stream_index_ = -1;
     int width_ = 0;
