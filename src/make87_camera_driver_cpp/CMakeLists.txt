@@ -6,6 +6,13 @@ option(ENABLE_JPEG_COMPRESSION "Enable JPEG compression output (ImageCompressed)
 
 # Debug: Print the value of ENABLE_JPEG_COMPRESSION
 message(STATUS "ENABLE_JPEG_COMPRESSION option value: ${ENABLE_JPEG_COMPRESSION}")
+message(STATUS "All cache variables containing JPEG:")
+get_cmake_property(_variableNames CACHE_PROPERTIES)
+foreach(_variableName ${_variableNames})
+    if(_variableName MATCHES "JPEG")
+        message(STATUS "  ${_variableName}")
+    endif()
+endforeach()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -33,10 +40,14 @@ add_executable(camera_driver src/camera_driver.cpp)
 ament_target_dependencies(camera_driver rclcpp sensor_msgs)
 target_link_libraries(camera_driver nlohmann_json::nlohmann_json PkgConfig::LIBAV)
 
-# Configure compression mode
-if(ENABLE_JPEG_COMPRESSION)
+# Configure compression mode - force it based on command line arg
+message(STATUS "Before if: ENABLE_JPEG_COMPRESSION = ${ENABLE_JPEG_COMPRESSION}")
+if(ENABLE_JPEG_COMPRESSION STREQUAL "ON")
     target_compile_definitions(camera_driver PRIVATE ENABLE_JPEG_COMPRESSION)
-    message(STATUS "Building with JPEG compression (ImageCompressed output)")
+    message(STATUS "Building with JPEG compression (ImageCompressed output) - FORCED ON")
+elseif(ENABLE_JPEG_COMPRESSION)
+    target_compile_definitions(camera_driver PRIVATE ENABLE_JPEG_COMPRESSION)
+    message(STATUS "Building with JPEG compression (ImageCompressed output) - OPTION ON")
 else()
     target_compile_definitions(camera_driver PRIVATE ENABLE_RGB8_OUTPUT)
     message(STATUS "Building with raw RGB8 (Image output)")
