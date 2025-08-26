@@ -347,6 +347,9 @@ public:
     }
 
     bool read_frame(std::vector<uint8_t>& output_data) {
+        static int jpeg_error_count = 0;
+        const int MAX_JPEG_ERRORS = 10;
+        
         while (true) {
             int ret = av_read_frame(format_ctx_, packet_);
             if (ret < 0) {
@@ -398,10 +401,19 @@ public:
 #ifdef ENABLE_JPEG_COMPRESSION
             // Encode as JPEG
             if (!encode_jpeg(output_data)) {
+                jpeg_error_count++;
+                if (jpeg_error_count >= MAX_JPEG_ERRORS) {
+                    RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
+                               "Too many JPEG encoding failures (%d), aborting", MAX_JPEG_ERRORS);
+                    return false;
+                }
                 RCLCPP_WARN(rclcpp::get_logger("make87_camera_driver"),
-                           "Failed to encode JPEG, retrying...");
+                           "Failed to encode JPEG (%d/%d), retrying...", jpeg_error_count, MAX_JPEG_ERRORS);
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
             }
+            // Reset error count on success
+            jpeg_error_count = 0;
 #else
             // Copy RGB24 data to output vector
             int rgb_size = width_ * height_ * 3; // 3 bytes per pixel (RGB)
@@ -437,14 +449,27 @@ public:
         jpeg_frame->width = width_;
         jpeg_frame->height = height_;
         
+        // Allocate buffer for JPEG frame
+        if (av_frame_get_buffer(jpeg_frame, 32) < 0) {
+            RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"), 
+                        "Failed to allocate JPEG frame buffer");
+            av_frame_free(&jpeg_frame);
+            return false;
+        }
+        
         // Copy data from target_frame to jpeg_frame
         av_frame_copy(jpeg_frame, target_frame_);
+        av_frame_copy_props(jpeg_frame, target_frame_);
 
         // Send frame to encoder
         int ret = avcodec_send_frame(jpeg_encoder_ctx_, jpeg_frame);
         av_frame_free(&jpeg_frame);
         
         if (ret < 0) {
+            char error_buf[128];
+            av_strerror(ret, error_buf, sizeof(error_buf));
+            RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"), 
+                        "Failed to send frame to JPEG encoder: %s", error_buf);
             return false;
         }
 
@@ -458,6 +483,11 @@ public:
             memcpy(jpeg_data.data(), jpeg_packet->data, jpeg_packet->size);
             av_packet_free(&jpeg_packet);
             return true;
+        } else if (ret < 0) {
+            char error_buf[128];
+            av_strerror(ret, error_buf, sizeof(error_buf));
+            RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"), 
+                        "Failed to receive JPEG packet: %s", error_buf);
         }
         
         av_packet_free(&jpeg_packet);
@@ -484,7 +514,12 @@ public:
         jpeg_encoder_ctx_->qmin = 10;
         jpeg_encoder_ctx_->qmax = 63;
 
-        if (avcodec_open2(jpeg_encoder_ctx_, jpeg_codec, nullptr) < 0) {
+        int ret = avcodec_open2(jpeg_encoder_ctx_, jpeg_codec, nullptr);
+        if (ret < 0) {
+            char error_buf[128];
+            av_strerror(ret, error_buf, sizeof(error_buf));
+            RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"), 
+                        "Failed to open JPEG encoder: %s", error_buf);
             avcodec_free_context(&jpeg_encoder_ctx_);
             return false;
         }
