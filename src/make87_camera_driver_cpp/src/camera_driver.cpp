@@ -9,6 +9,8 @@
 #include <atomic>
 #include <sstream>
 #include <iomanip>
+#include <regex>
+#include <fstream>
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/image_encodings.hpp"
@@ -45,6 +47,59 @@ std::string url_encode(const std::string& value) {
     return escaped.str();
 }
 
+// Secret resolution function - resolves {{ secret.NAME }} patterns
+std::string resolve_secret_string(const std::string& input) {
+    static const std::regex secret_pattern(R"(^\s*\{\{\s*secret\.([A-Za-z0-9_]+)\s*}}\s*$)");
+    std::smatch matches;
+    
+    if (std::regex_match(input, matches, secret_pattern)) {
+        std::string secret_name = matches[1].str();
+        std::string secret_path = "/run/secrets/" + secret_name + ".secret";
+        
+        std::ifstream secret_file(secret_path);
+        if (!secret_file.is_open()) {
+            RCLCPP_ERROR(rclcpp::get_logger("make87_camera_driver"),
+                        "Failed to read secret file: %s", secret_path.c_str());
+            return input; // Return original string if secret can't be read
+        }
+        
+        std::string secret_value;
+        std::getline(secret_file, secret_value);
+        
+        // Trim whitespace
+        secret_value.erase(0, secret_value.find_first_not_of(" \t\n\r"));
+        secret_value.erase(secret_value.find_last_not_of(" \t\n\r") + 1);
+        
+        RCLCPP_DEBUG(rclcpp::get_logger("make87_camera_driver"),
+                    "Resolved secret %s from %s", secret_name.c_str(), secret_path.c_str());
+        
+        return secret_value;
+    }
+    
+    return input; // Return original string if no secret pattern found
+}
+
+// Recursively resolve secrets in nlohmann::json
+nlohmann::json resolve_secrets(const nlohmann::json& value) {
+    if (value.is_object()) {
+        nlohmann::json resolved_obj = nlohmann::json::object();
+        for (auto& [key, val] : value.items()) {
+            resolved_obj[key] = resolve_secrets(val);
+        }
+        return resolved_obj;
+    } else if (value.is_array()) {
+        nlohmann::json resolved_arr = nlohmann::json::array();
+        for (const auto& item : value) {
+            resolved_arr.push_back(resolve_secrets(item));
+        }
+        return resolved_arr;
+    } else if (value.is_string()) {
+        return resolve_secret_string(value.get<std::string>());
+    } else {
+        return value; // Return other types (numbers, booleans, null) unchanged
+    }
+}
+
 struct CameraConfig {
     std::string camera_name;
     std::string camera_ip;
@@ -66,6 +121,9 @@ CameraConfig parse_camera_config() {
 
     try {
         auto parsed = nlohmann::json::parse(config_env);
+        
+        // Resolve secrets in the entire JSON structure
+        parsed = resolve_secrets(parsed);
         
         // The camera config is nested under the "config" key
         if (!parsed.contains("config")) {
