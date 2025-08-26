@@ -374,7 +374,7 @@ build_ros_workspace() {
         echo "DEBUG: CMAKE_ARGS = '${CMAKE_ARGS}'"
         # Clean build to ensure cmake args take effect
         rm -rf build/ install/ log/
-        if ! colcon build --merge-install --cmake-force-configure --cmake-args ${CMAKE_ARGS}; then
+        if ! colcon build --merge-install --cmake-force-configure --cmake-args -DCMAKE_BUILD_TYPE=Release -DENABLE_JPEG_COMPRESSION=ON; then
             log_fatal "Failed to build ROS2 workspace"
         fi
 
