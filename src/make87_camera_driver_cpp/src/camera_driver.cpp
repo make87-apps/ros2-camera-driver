@@ -519,9 +519,13 @@ private:
         // Copy RGB data
         msg->data = rgb_data;
 
+        // Get values before move
+        auto width = msg->width;
+        auto height = msg->height;
+        
         pub_->publish(std::move(msg));
         RCLCPP_DEBUG(this->get_logger(), "Published RGB8 frame %dx%d (%zu bytes)",
-                    msg->width, msg->height, rgb_data.size());
+                    width, height, rgb_data.size());
     }
   }
 
